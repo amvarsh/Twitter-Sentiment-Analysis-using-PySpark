@@ -43,7 +43,6 @@ dataFrame = dataFrame.withColumn('tweet', regexp_replace('tweet', '$', ' '))
 
 for word in stopwords:
     dataFrame = dataFrame.withColumn('tweet', regexp_replace('tweet', word, ' '))
-
-    dataFrame = dataFrame.withColumn('tweet', trim(col('tweet')))
+dataFrame = dataFrame.withColumn('tweet', trim(col('tweet')))
 dataFrame.toPandas().to_csv('tweet/tweet_preprocessed.csv')
 
