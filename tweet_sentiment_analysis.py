@@ -1,74 +1,41 @@
 import pandas as pd
+from pyspark import SparkContext
+from pyspark.sql.session import SparkSession
+from pyspark.sql.functions import regexp_replace,udf,col
+from pyspark.sql.types import IntegerType
 
-dfTweet = pd.read_csv("tweet/tweet_preprocessed.csv")
+sc = SparkContext(appName="PySparkShell")
+spark = SparkSession(sc)
+spark.conf.set( "spark.sql.crossJoin.enabled" , "true" )
+dataFrame = spark.read.format("csv")\
+    .option("header", "true")\
+    .option("inferSchema", "true")\
+    .option("encoding", "utf-8")\
+    .load("tweet/tweet_preprocessed.csv")
 
-emoticonsPositive = ('😇','😊','❤️','😘','💞','💖','🤗','💕','👏','🎉','👍','🔝')
-emoticonsNegative = ('😂','😡','😠','😭','🤦‍','🤷🏼‍','😞','😱','😓','👎')
-
-radiciPositive = ("ama","amo","affett","allegr","amabil","apprezz","armon","affet",
-                  "applaus","abbracc","ador",
-                  "bell","ben","beat","brav","buon","benef","brill",
-                  "cuor","coeren","celebr",
-                  "dolc","divert",
-                  "evviva","emoz","elog",
-                  "felic","fest","facil",
-                  "gentil","god","grazi","generos","gioi", 
-                  "innamor", "interes","insieme",
-                  "libert",
-                  "maestos","miglior",
-                  "pace","passion","perfe","piac","pura","purezz","prezios","promuov",
-                  "rilass","riabbracc",
-                  "solida","spero","speran","success","sì","sacr","stupend","spettacol", 
-                  "viv","vin","valor","vale","vera","vittor")
-radiciNegative = ("accus","amaro","amarez","arm","ammazz", 
-                  "brut","boicott","boh","bho",
-                  "condann","cazz","crisi","critic","coglion", 
-                  "decent","depress","detest","disgr","delir","damn","drog",
-                  "fumo","fuma",
-                  "esorcis",
-                  "fascis",
-                  "guai", 
-                  "immat","insult", "inuman","impone",
-                  "lent",  
-                  "mor","merd","male","maial",
-                  "no", "nega","ncazz","negr", 
-                  "od","oscur",
-                  "perde","preoccup","pusillanim","porc",
-                  "rovina",
-                  "schif","satan","sprof","soffri","soffer","scandal","scars","sporc", "spar","stalk",
-                  "trist","trash","tarocc",
-                  "vergogn",
-                  "zitt")
-radiciDaEscludere = ("now", "nom", "not","noz", "amp", "nor","veramente","imponent")
+neg_words= tuple(open('negative-words.txt').read().splitlines())
+pos_words= tuple(open('positive-words.txt').read().splitlines())
+excludedWords=("really", "truly", "actually" ,"indeed", "real", "downright", "forsooth", "now", "name", "nickname", "none", "nor")
 
 def textSentiment(string):
     val = 0
     list = string.split()
     for word in list:
+        if not word.startswith(excludedWords):
+            if (word.startswith(pos_words)):
+                val = val + 1
 
-        if word in emoticonsPositive:
-            return 2    # Tweet considerato positivo
+            if (word.startswith(neg_words)):
+                if word not in ("not", "despite", "notwithstanding"):
+                    val = val - 1
 
-        elif word in emoticonsNegative:
-            return 0    # Tweet considerato negativo
+            # Il 'non' cambia dinamicamente la polarita' del tweet
+            if word == "not":
+                val = val * -1
 
-        else:
-            if not word.startswith(radiciDaEscludere):
-
-                if (word.startswith(radiciPositive)):
-                    val = val + 1
-
-                if (word.startswith(radiciNegative)):
-                    if word not in ("non", "nonostante"):
-                        val = val - 1
-
-                # Il 'non' cambia dinamicamente la polarita' del tweet
-                if word == "non":
-                    val = val * -1
-
-                # Tutte le parole prima di 'ma' e 'però' non vengono considerate
-                if word in ("ma", "però"):
-                    val = 0
+            # Tutte le parole prima di 'ma' e 'però' non vengono considerate
+            if word in ("but", "however", "yet"):
+                val = 0
 
     if (val > 0):
         label = 2
@@ -78,32 +45,10 @@ def textSentiment(string):
         label = 1
     return label
 
-dfTweet[['label']] = dfTweet['tweet'].apply(lambda tweet: pd.Series(textSentiment(tweet)))
-
+#dfTweet[['label']] = dfTweet['tweet'].apply(lambda tweet: pd.Series(textSentiment(tweet)))
+udf_sentiment = udf(lambda x:textSentiment(x),IntegerType())
+dataFrame=dataFrame.withColumn("label",udf_sentiment(col("tweet")))
 # Ordino il dataframe per la successiva parte di Machine Learning
-dfTweet = dfTweet[[ 'tweet', 'label', 'tweet_original']]
-
-
-
-# from nltk.stem.snowball import SnowballStemmer
-# stemmer = SnowballStemmer("italian")
-
-# def stemming(string):
-#     list = string.split()
-#     wordStem = ""
-#     text = ""
-#     for word in list:
-#         wordStem = stemmer.stem(word)    
-#         text = text + wordStem + " "
-    
-#     text = text.rstrip()
-#     return text
-
-# dfTweet['tweet'] = dfTweet["tweet"].apply(lambda tweet: pd.Series(stemming(tweet)))
-
-# print(dfTweet)
-
-dfTweet.to_csv("tweet/tweet_labelled.csv", index=False)
-
-
+dataFrame = dataFrame.drop("_c0").drop("username")
+dataFrame.toPandas().to_csv('tweet/tweet_labelled.csv')
 
