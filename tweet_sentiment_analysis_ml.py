@@ -78,8 +78,7 @@ tweetNegWord.show(40)
 testIta = testD.select("tweet_original")
 outputTemp = predictions.join(testIta)
 output = outputTemp.select("prediction","tweet_original")
-output.coalesce(1).write.csv("tweet_result.csv")
-
+output.coalesce(1).toPandas().to_csv("tweet_result.csv")
 
 
 
