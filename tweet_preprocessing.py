@@ -1,48 +1,24 @@
-import pandas as pd
-from nltk.corpus import stopwords
-from pyspark import SparkContext
-from pyspark.sql.session import SparkSession
-from pyspark.sql.functions import regexp_replace
-from pyspark.sql.functions import lower, col, trim
+# import findspark
+# findspark.init()
+from pyspark.sql.functions import udf
+import nltk
+from pyspark.sql.types import StringType
+import re
 
-sc = SparkContext(appName="PySparkShell")
-spark = SparkSession(sc)
-spark.conf.set( "spark.sql.crossJoin.enabled" , "true" )
-dataFrame = spark.read.format("csv")\
-    .option("header", "true")\
-    .option("inferSchema", "true")\
-    .option("encoding", "utf-8")\
-    .load("tweet/tweet_collection.csv")
+def clean_tweet(tweet):
+    return ' '.join(re.sub("(@[A-Za-z0-9]+)|([^0-9A-Za-z \t])|(\w+:\/\/\S+)", " ", tweet).split())
 
-dataFrame=dataFrame.dropDuplicates(['tweet'])
-dataFrame=dataFrame.withColumn("tweet_original", dataFrame["tweet"])
+def realtime_process(spark):
+    dataFrame = spark.read.format("csv")\
+        .option("header", "true")\
+        .option("inferSchema", "true")\
+        .option("encoding", "utf-8")\
+        .load("realtime/realtime_tweets.csv")
 
-# Adding a space before and after each stopword so as not to consider 
-# the case in which the stopword is contained in a word
-words = set(stopwords.words('english'))
-stopwords = [' ' + x + ' ' for x in words]
+    dataFrame=dataFrame.dropna()
+    
+    convertUDF = udf(lambda z: clean_tweet(z),StringType())
+    dataFrame = dataFrame.withColumn('tweetP',convertUDF('tweet'))
 
-emoticons =  ('😇','😊','❤️','😘','💞','💖','🤗','💕','👏','🎉','👍',
-              '😂','😡','😠','😭','🤦‍','🤷🏼‍','😞','👎','😱','😓','🔝')
-dataFrame= dataFrame.withColumn('tweet', regexp_replace('tweet', '@[\w]*[_-]*[\w]*', ' ')) 
-dataFrame=dataFrame.withColumn('tweet', regexp_replace('tweet', 'https?://[\w/%-.]*', ' ')) 
-dataFrame=dataFrame.withColumn('tweet', regexp_replace('tweet', '[^ a-zA-Zà-ú'
-                            '\😇\😊\❤️\😘\💞\💖\🤗\💕\👏\🎉\👍'
-                            '\😂\😡\😠\😭\🤦‍\🤷🏼‍\😞\😱\👎\😓\🔝]', ' ')) 
-dataFrame=dataFrame.withColumn('tweet', regexp_replace('tweet',"""[^ 'a-zA-Z0-9,.?!]""", ' '))
-
-for word in emoticons:
-    dataFrame= dataFrame.withColumn('tweet', regexp_replace('tweet',word, " "+word+" ")) 
-
-dataFrame = dataFrame.withColumn('tweet', regexp_replace('tweet', '\s+', ' '))            # Removing excess spaces
-dataFrame = dataFrame.withColumn('tweet', regexp_replace('tweet', '^ ', ''))                # Removing spaces at the beginnning
-dataFrame = dataFrame.withColumn('tweet', regexp_replace('tweet', ' $', ''))                # Removing spaces at the end
-dataFrame = dataFrame.withColumn('tweet', lower(col('tweet')))
-dataFrame = dataFrame.withColumn('tweet', regexp_replace('tweet', '^', ' ')) 
-dataFrame = dataFrame.withColumn('tweet', regexp_replace('tweet', '$', ' '))
-
-for word in stopwords:
-    dataFrame = dataFrame.withColumn('tweet', regexp_replace('tweet', word, ' '))
-dataFrame = dataFrame.withColumn('tweet', trim(col('tweet')))
-dataFrame.toPandas().to_csv('tweet/tweet_preprocessed.csv')
+    dataFrame.toPandas().to_csv('realtime/realtime_preprocessed.csv', mode = 'w')
 

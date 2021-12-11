@@ -2,88 +2,96 @@
 from pyspark import SparkContext
 from pyspark.sql.session import SparkSession
 from pyspark.streaming import StreamingContext
-from pyspark.ml.feature import HashingTF, IDF, Tokenizer
+from pyspark.ml.feature import HashingTF, IDF, Tokenizer, StringIndexer
 from pyspark.ml import Pipeline
-from pyspark.ml.classification import NaiveBayes
+from pyspark.ml.classification import NaiveBayes, RandomForestClassifier, LogisticRegression
 from pyspark.ml.evaluation import MulticlassClassificationEvaluator
+from pyspark.mllib.evaluation import MulticlassMetrics
 from pyspark.sql.functions import col
 from pyspark.sql.functions import count
 import pyspark.sql.functions as f
 from pyspark.sql import SparkSession
+# import findspark
+# findspark.init()
 
-sc = SparkContext(appName="PySparkShell")
-spark = SparkSession(sc)
+def start_spark():
+    sc = SparkContext(appName="PySparkShell")
+    spark = SparkSession(sc)
+    return spark
+
+spark=start_spark()
 dataFrame = spark.read.format("csv")\
     .option("header", "true")\
     .option("inferSchema", "true")\
     .option("encoding", "utf-8")\
     .load("tweet/tweet_labelled.csv")
 
-# Genero il trainingSet e il dataSet selezionando
-# solamente le colonne che servono per l'algoritmo di ML
-(trainingD, testD) = dataFrame.randomSplit([0.9, 0.1])
-trainingData = trainingD.select("tweet","label")
-testData = testD.select("tweet","label")
 
-# Configurazione del dataframe per la libreria di ML
-tokenizer = Tokenizer(inputCol="tweet", outputCol="words")
+(trainingD, testD) = dataFrame.randomSplit([0.9, 0.1])
+trainingData = trainingD.select("tweetP","Category")
+testData = testD.select("tweetP","Category")
+
+label_string_idx = StringIndexer()\
+                  .setInputCol("Category")\
+                  .setOutputCol("label")
+
+tokenizer = Tokenizer(inputCol="tweetP", outputCol="words")
 hashingTF = HashingTF(inputCol=tokenizer.getOutputCol(), outputCol="rawFeatures")
 idf = IDF(minDocFreq=3, inputCol="rawFeatures", outputCol="features")
 
-# Invocazione dell'algoritmo Naive Bayes
-nb = NaiveBayes()
 
-# Dichiarazione della pipeline
-pipeline = Pipeline(stages=[tokenizer, hashingTF, idf, nb])
+##############################################    LOGISTIC REGRESSION    ##############################################
 
-# Training del modello con trainingData
-model = pipeline.fit(trainingData)
-
-# Valutazione del modello con trainingData
-predictions = model.transform(trainingData)
-evaluator = MulticlassClassificationEvaluator(predictionCol="prediction")
-evaluator.evaluate(predictions)
-
-# Valutazione del modello con testData
-predictions = model.transform(testData)
-evaluator = MulticlassClassificationEvaluator(predictionCol="prediction")
-evaluator.evaluate(predictions)
-
-# Mostra in output il dataframe della pipeline
-predictions.show(10)
-
-# Mostra il totale di tweet positivi, negativi e neutri
-tweetPosNegNeu = predictions.groupBy("prediction").count()
-tweetPosNegNeu.show()
-
-# Parole più frequenti nei tweet positivi
-tweetPosWord = predictions.select("label","prediction","tweet")\
-    .withColumn('word', f.explode(f.split(f.col('tweet'), ' ')))\
-    .where(col('label') == 2)\
-    .groupBy('word')\
-    .count()\
-    .sort('count', ascending=False)
-tweetPosWord.show(40)
-
-# Parole più frequenti nei tweet negativi
-tweetNegWord = predictions.select("label","prediction","tweet")\
-    .withColumn('word', f.explode(f.split(f.col('tweet'), ' ')))\
-    .where(col('label') == 0)\
-    .groupBy('word')\
-    .count()\
-    .sort('count', ascending=False)
-tweetNegWord.show(40)
-
-# Salvataggio su file csv con tweet non filtrati affiancati dalla previsione
-testIta = testD.select("tweet_original")
-outputTemp = predictions.join(testIta)
-output = outputTemp.select("prediction","tweet_original")
-output.coalesce(1).write.csv("tweet_result.csv")
+lr = LogisticRegression(featuresCol="features", labelCol="label",predictionCol="prediction",maxIter=20, regParam=0.3, elasticNetParam=0)
+pipeline_lr = Pipeline(stages=[tokenizer, hashingTF, idf, label_string_idx, lr])
+model_lr = pipeline_lr.fit(trainingData)
+predictions_lr=model_lr.transform(testData)
+pipeline_lr.write().overwrite().save('model/LogisticRegression')
+# predictions_lr.select('tweetP','Category',"probability","label","prediction").show(30)
 
 
+evaluator_cv_lr = MulticlassClassificationEvaluator().setPredictionCol("prediction").evaluate(predictions_lr)
+print('------------------------------Accuracy----------------------------------')
+print(' ')
+print('               Logistic Regression accuracy:{}:'.format(evaluator_cv_lr))
 
 
+predictions_lr_metrics=predictions_lr.select("label", "prediction").rdd
+lr_metrics = MulticlassMetrics(predictions_lr_metrics)
+print(lr_metrics.confusionMatrix().toArray())
 
 
+##############################################    NAIVE BAYES    ##############################################
+
+nb = NaiveBayes(featuresCol="features", labelCol="label",predictionCol="prediction",smoothing=1)
+pipeline_nb = Pipeline(stages=[tokenizer, hashingTF, idf, label_string_idx, nb])
+model_nb = pipeline_nb.fit(trainingData)
+predictions_nb=model_nb.transform(testData)
+
+pipeline_nb.write().overwrite().save('model/NaiveBayes')
+# predictions_nb.select('tweetP','Category',"probability","label","prediction").show(30)
 
 
+evaluator_cv_nb = MulticlassClassificationEvaluator().setPredictionCol("prediction").evaluate(predictions_nb)
+print('------------------------------Accuracy----------------------------------')
+print(' ')
+print('                      Naive Bayes accuracy:{}:'.format(evaluator_cv_nb))
+
+predictions_nb_metrics=predictions_nb.select("label", "prediction").rdd
+nb_metrics = MulticlassMetrics(predictions_nb_metrics)
+print(nb_metrics.confusionMatrix().toArray())
+
+
+# # Mostra il totale di tweet positivi, negativi e neutri
+# tweetPosNegNeu = predictions.groupBy("prediction").count()
+# tweetPosNegNeu.show()
+
+# # Most frequent words in positive tweets
+# tweetPosWord = predictions.select("label","prediction","tweet").withColumn('word', f.explode(f.split(f.col('tweet'), ' ')))\
+#     .where(col('label') == 2).groupBy('word').count().sort('count', ascending=False)
+# tweetPosWord.show(40)
+
+# # Most frequent words in negative tweets
+# tweetNegWord = predictions.select("label","prediction","tweet").withColumn('word', f.explode(f.split(f.col('tweet'), ' ')))\
+#     .where(col('label') == 0).groupBy('word').count().sort('count', ascending=False)
+# tweetNegWord.show(40)
