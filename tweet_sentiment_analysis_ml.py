@@ -47,7 +47,7 @@ pipeline_lr = Pipeline(stages=[tokenizer, hashingTF, idf, label_string_idx, lr])
 model_lr = pipeline_lr.fit(trainingData)
 predictions_lr=model_lr.transform(testData)
 pipeline_lr.write().overwrite().save('model/LogisticRegression')
-# predictions_lr.select('tweetP','Category',"probability","label","prediction").show(30)
+predictions_lr.select('tweetP','Category',"probability","label","prediction").show(30)
 
 
 evaluator_cv_lr = MulticlassClassificationEvaluator().setPredictionCol("prediction").evaluate(predictions_lr)
@@ -63,13 +63,14 @@ print(lr_metrics.confusionMatrix().toArray())
 
 ##############################################    NAIVE BAYES    ##############################################
 
+
 nb = NaiveBayes(featuresCol="features", labelCol="label",predictionCol="prediction",smoothing=1)
 pipeline_nb = Pipeline(stages=[tokenizer, hashingTF, idf, label_string_idx, nb])
 model_nb = pipeline_nb.fit(trainingData)
 predictions_nb=model_nb.transform(testData)
 
 pipeline_nb.write().overwrite().save('model/NaiveBayes')
-# predictions_nb.select('tweetP','Category',"probability","label","prediction").show(30)
+predictions_nb.select('tweetP','Category',"probability","label","prediction").show(30)
 
 
 evaluator_cv_nb = MulticlassClassificationEvaluator().setPredictionCol("prediction").evaluate(predictions_nb)
@@ -81,17 +82,3 @@ predictions_nb_metrics=predictions_nb.select("label", "prediction").rdd
 nb_metrics = MulticlassMetrics(predictions_nb_metrics)
 print(nb_metrics.confusionMatrix().toArray())
 
-
-# # Mostra il totale di tweet positivi, negativi e neutri
-# tweetPosNegNeu = predictions.groupBy("prediction").count()
-# tweetPosNegNeu.show()
-
-# # Most frequent words in positive tweets
-# tweetPosWord = predictions.select("label","prediction","tweet").withColumn('word', f.explode(f.split(f.col('tweet'), ' ')))\
-#     .where(col('label') == 2).groupBy('word').count().sort('count', ascending=False)
-# tweetPosWord.show(40)
-
-# # Most frequent words in negative tweets
-# tweetNegWord = predictions.select("label","prediction","tweet").withColumn('word', f.explode(f.split(f.col('tweet'), ' ')))\
-#     .where(col('label') == 0).groupBy('word').count().sort('count', ascending=False)
-# tweetNegWord.show(40)
